@@ -1,13 +1,12 @@
 from datetime import timedelta
-from model import ModelCardSwipe
 # needed for any cluster connection
 from couchbase.auth import PasswordAuthenticator
 from couchbase.cluster import Cluster
 # needed for options -- cluster, timeout, SQL++ (N1QL) query, etc.
 from couchbase.options import (ClusterOptions, ClusterTimeoutOptions, QueryOptions)
 import csv
-
-
+import time
+import glob
 """
 1- istanza di info specifica: POI che ha avuto il minimo numero di accessi in un giorno specifico 
 2- dato un anno, trovare per ogni mese il POI con il numero massimo di accessi
@@ -86,16 +85,29 @@ class CouchVeronaCard():
         with open(filename, 'r') as csvfile:
             datareader = csv.reader(csvfile)
             for record in datareader:
-                doc = ModelCardSwipe(*record)
+                date_parts = record[0].split("-")
+                date = date_parts[0] + '-' + date_parts[1] + '-20' + date_parts[2]
+
+                date_event_parts = record[5].split("-")
+                date_event = date_event_parts[0] + '-' + date_event_parts[1] + '-20' + date_event_parts[2]
+
+                doc = {
+                    "date":         date,
+                    "time":         record[1],
+                    "venue_name":   record[2],
+                    "venue_id":     record[3],
+                    "card_id":      record[4],
+                    "date_event":   date_event,
+                    "field1":       record[6],
+                    "field2":       record[7],
+                    "card_type":    record[8],
+                    "filename":     filename
+                }
                 try:
-                    key = doc.date + '-' + doc.time + '-' + doc.venue_id
-                    self.coll_import.upsert(key, doc.toDictionary())
+                    key = doc['date'] + '-' + doc['time'] + '-' + doc['venue_id']
+                    self.coll_import.upsert(key, doc)
                 except Exception as e:
                     print(e)
-
-    def LogDataImport(self):
-
-
 
     def AggregateByVenueDate(self):
         """
@@ -149,12 +161,10 @@ class CouchVeronaCard():
                     days = [swipe['date'] for swipe in row['swipe']]
                     row['num_days'] = len(set(days))
                     self.coll_card.upsert(key, row)
-                    cntr += 1
                 except Exception as e:
                     print(e)
         except Exception as e:
             print(e)
-        print(cntr)
 
     def searchVenueLestVisitDay(self, day):
         """
@@ -230,74 +240,65 @@ class CouchVeronaCard():
         except Exception as e:
             print(e)
 
+    def LogGetData(self, filename):
+        qry = """
+            SELECT l.*
+            FROM verona_card.verona_card_0.vc_log l
+            WHERE filename = $1
+        """
+        params = QueryOptions(positional_parameters=[filename])
+        row_iter = self.cluster.query(qry, params)
+        results = []
+        try:
+            for row in row_iter:
+                print(row)
+                results.append(row)
+        except Exception as e:
+            print(e)
+            results = None
+        return results
+
+    def LogAddData(self, filename):
+        return
+        result = True
+        key = filename.replace(' ', '_')
+        doc = {
+            'filename':     filename,
+            'date_import':  time.time(),
+            'date_min':     date_min,
+            'date_max':     date_max
+        }
+        try:
+            self.coll_log(key, doc)
+        except Exception as e:
+            print(e)
+            result = False
+        return result
+
 def main():
     cvc = CouchVeronaCard("Administrator", "123456", "verona_card", 'verona_card_0')
     cvc.connect()
 
-    csvpath = "./dataset_veronacard_2014_2020/dati_2014.csv"
-    # cvc.importCSV(csvpath)
-    #cvc.AggregateByVenueDate()
-    #cvc.AggregateByCard()
+    basepath = "./dataset_veronacard_2014_2020/"
+    csvfiles = glob.glob(basepath+'*.csv')
+    for csvfile in csvfiles:
+        print(f"Processing: {csvfile}")
+        logs = cvc.LogGetData(csvfile)
+        if len(logs)>0:
+            print(f"Skippings: {csvfile}")
+            continue #skip import
+        cvc.importCSV(csvfile)
+        cvc.LogAddData(csvfile)
+        break
+
+        cvc.AggregateByVenueDate()
+        cvc.AggregateByCard()
+
     #cvc.searchVenueLestVisitDay('17-08-14')
     #cvc.searchVenueMostMonthVisitYear('14')
-    cvc.searchCardsSwipeMultipleDays()
+    #cvc.searchCardsSwipeMultipleDays()
 
 
-
-"""
-# upsert document function
-def upsert_document(doc):
-    print("\nUpsert CAS: ")
-    try:
-        # key will equal: "airline_8091"
-        key = doc["type"] + "_" + str(doc["id"])
-        result = cb_coll.upsert(key, doc)
-        print(result.cas)
-    except Exception as e:
-        print(e)
-
-# get document function
-
-
-def get_airline_by_key(key):
-    print("\nGet Result: ")
-    try:
-        result = cb_coll.get(key)
-        print(result.content_as[str])
-    except Exception as e:
-        print(e)
-
-# query for new document by callsign
-
-
-def lookup_by_callsign(cs):
-    print("\nLookup Result: ")
-    try:
-        sql_query = 'SELECT VALUE name FROM `travel-sample`.inventory.airline WHERE callsign = $1'
-        row_iter = cluster.query(
-            sql_query,
-            QueryOptions(positional_parameters=[cs]))
-        for row in row_iter:
-            print(row)
-    except Exception as e:
-        print(e)
-
-
-airline = {
-    "type": "airline",
-    "id": 8091,
-    "callsign": "CBS",
-    "iata": None,
-    "icao": None,
-    "name": "Couchbase Airways",
-}
-
-upsert_document(airline)
-
-get_airline_by_key("airline_8091")
-
-lookup_by_callsign("CBS")
-"""
 
 if __name__ == '__main__':
     main()
