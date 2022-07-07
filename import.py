@@ -355,8 +355,8 @@ def main():
         cvc.AggregateByVenueDate()
         cvc.AggregateByCard()
 
-    cvc.searchVenueLestVisitDay('17-08-14')
-    cvc.searchVenueMostMonthVisitYear('14')
+    cvc.searchVenueLestVisitDay('17-08-2014')
+    cvc.searchVenueMostMonthVisitYear('2014')
     cvc.searchCardsSwipeMultipleDays()
 
 
