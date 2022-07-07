@@ -47,6 +47,13 @@ class CouchVeronaCard():
         self.coll_card_name = "vc_card"
         self.coll_log_name = "vc_log"
 
+        self.coll_list = [
+            self.coll_import_name,
+            self.coll_poi_name,
+            self.coll_card_name,
+            self.coll_log_name
+        ]
+
         self.cluster = None
         self.bucket = None
         self.scope = None
@@ -88,8 +95,8 @@ class CouchVeronaCard():
                 date_parts = record[0].split("-")
                 date = date_parts[0] + '-' + date_parts[1] + '-20' + date_parts[2]
 
-                date_event_parts = record[5].split("-")
-                date_event = date_event_parts[0] + '-' + date_event_parts[1] + '-20' + date_event_parts[2]
+                date_act_parts = record[5].split("-")
+                date_act = date_act_parts[0] + '-' + date_act_parts[1] + '-20' + date_act_parts[2]
 
                 doc = {
                     "date":         date,
@@ -97,7 +104,7 @@ class CouchVeronaCard():
                     "venue_name":   record[2],
                     "venue_id":     record[3],
                     "card_id":      record[4],
-                    "date_event":   date_event,
+                    "date_activation": date_act,
                     "field1":       record[6],
                     "field2":       record[7],
                     "card_type":    record[8],
@@ -122,7 +129,7 @@ class CouchVeronaCard():
                 ARRAY_AGG( {time, card_id, card_type} ) AS swipe,
                 SUBSTR(date,0,2) day,
                 SUBSTR(date,3,2) month,
-                SUBSTR(date,6,2) year 
+                SUBSTR(date,6,4) year 
             FROM verona_card.verona_card_0.import i 
             GROUP BY venue_name, date
         """
@@ -174,7 +181,8 @@ class CouchVeronaCard():
             SELECT p.*
             FROM verona_card.verona_card_0.vc_poi p
             WHERE 
-            date = $1 AND cnt WITHIN (
+            date = $1 AND 
+            cnt WITHIN (
                 SELECT cnt
                 FROM verona_card.verona_card_0.vc_poi p2
                 WHERE 
@@ -259,26 +267,80 @@ class CouchVeronaCard():
         return results
 
     def LogAddData(self, filename):
-        return
         result = True
+        qry = """
+            SELECT 
+                MIN(STR_TO_MILLIS( i.date ,'DD-MM-YYYY')) timestamp_min, 
+                MAX(STR_TO_MILLIS( i.date ,'DD-MM-YYYY')) timestamp_max
+            FROM verona_card.verona_card_0.import i
+            WHERE filename = $1
+        """
+        params = QueryOptions(positional_parameters=[filename])
+        row_iter = self.cluster.query(qry, params)
+        result = None
+        try:
+            for row in row_iter:
+                result = row
+                print(result)
+                break
+        except Exception as e:
+            print(e)
+            return False
+
         key = filename.replace(' ', '_')
         doc = {
-            'filename':     filename,
-            'date_import':  time.time(),
-            'date_min':     date_min,
-            'date_max':     date_max
+            'filename':          filename,
+            'date_import':       int( time.time() * 1000 ),
+            'timestamp_min':     result['timestamp_min'],
+            'timestamp_max':     result['timestamp_max']
         }
         try:
-            self.coll_log(key, doc)
+            print(result)
+            print(doc)
+            self.coll_log.upsert(key, doc)
         except Exception as e:
             print(e)
             result = False
         return result
 
-def main():
-    cvc = CouchVeronaCard("Administrator", "123456", "verona_card", 'verona_card_0')
-    cvc.connect()
+    def InitCollections(self):
+        qry_create = "CREATE COLLECTION {}.{}.{} IF NOT EXISTS"
+        qry_index = "CREATE PRIMARY INDEX IF NOT EXISTS ON {}.{}.{}"
 
+        try:
+            for coll_name in self.coll_list:
+                # COLLECTION
+                qry = self.cluster.query( qry_create.format(self.bucket_name, self.scope_name, coll_name) )
+                qry.execute()
+
+                # INDEX
+                qry = self.cluster.query( qry_index.format(self.bucket_name, self.scope_name, coll_name) )
+                qry.execute()
+
+        except Exception as e:
+            print("ERROR: InitCollections: ")
+            print(e)
+
+
+
+    def ResetCollections(self):
+        qry_delete = "DELETE FROM {}.{}.{}"
+        try:
+            for coll_name in self.coll_list:
+                qry = self.cluster.query(qry_delete.format(self.bucket_name, self.scope_name, coll_name) )
+                qry.execute()
+                print(qry)
+        except Exception as e:
+            print("ERROR: ResetCollections: ")
+            print(e)
+
+
+
+def main():
+    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
+    cvc.connect()
+    cvc.InitCollections()
+    cvc.ResetCollections()
     basepath = "./dataset_veronacard_2014_2020/"
     csvfiles = glob.glob(basepath+'*.csv')
     for csvfile in csvfiles:
@@ -286,17 +348,16 @@ def main():
         logs = cvc.LogGetData(csvfile)
         if len(logs)>0:
             print(f"Skippings: {csvfile}")
-            continue #skip import
+            continue
         cvc.importCSV(csvfile)
         cvc.LogAddData(csvfile)
-        break
 
         cvc.AggregateByVenueDate()
         cvc.AggregateByCard()
 
-    #cvc.searchVenueLestVisitDay('17-08-14')
-    #cvc.searchVenueMostMonthVisitYear('14')
-    #cvc.searchCardsSwipeMultipleDays()
+    cvc.searchVenueLestVisitDay('17-08-14')
+    cvc.searchVenueMostMonthVisitYear('14')
+    cvc.searchCardsSwipeMultipleDays()
 
 
 
