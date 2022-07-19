@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, date, datetime
 # needed for any cluster connection
 from couchbase.auth import PasswordAuthenticator
 from couchbase.cluster import Cluster
@@ -7,6 +7,7 @@ from couchbase.options import (ClusterOptions, ClusterTimeoutOptions, QueryOptio
 import csv
 import time
 import glob
+import pandas as pd
 """
 1- istanza di info specifica: POI che ha avuto il minimo numero di accessi in un giorno specifico 
 2- dato un anno, trovare per ogni mese il POI con il numero massimo di accessi
@@ -47,11 +48,16 @@ class CouchVeronaCard():
         self.coll_card_name = "vc_card"
         self.coll_log_name = "vc_log"
 
+        #self.coll_poi_list_name = "vc_poi_list"
+        #self.coll_calendar_name = "vc_calendar"
+
         self.coll_list = [
             self.coll_import_name,
             self.coll_poi_name,
             self.coll_card_name,
-            self.coll_log_name
+            self.coll_log_name,
+            #self.coll_poi_list_name,
+            #self.coll_calendar_name
         ]
 
         self.cluster = None
@@ -62,6 +68,8 @@ class CouchVeronaCard():
         self.coll_poi = None
         self.coll_card = None
         self.coll_log = None
+        self.coll_poi_list = None
+        self.coll_calendar = None
 
 
     def connect(self):
@@ -71,9 +79,29 @@ class CouchVeronaCard():
 
         # Connect options - authentication
         auth = PasswordAuthenticator(self.username,self.password)
-
         # Get a reference to our cluster
         # NOTE: For TLS/SSL connection use 'couchbases://<your-ip-address>' instead
+        #
+        #
+        # Increase index timeout
+        # curl -X POST -u couchtester:couchtester http://localhost:9102/settings --data '{"indexer.settings.scan_timeout": 300000}'
+        #
+        #
+        # Increase other timeouts
+        # cluster_timeout = ClusterTimeoutOptions(
+        #     bootstrap_timeout =timedelta(minutes=30),
+        #     resolve_timeout =timedelta(minutes=30),
+        #     connect_timeout =timedelta(minutes=30),
+        #     kv_timeout =timedelta(minutes=30),
+        #     kv_durable_timeout =timedelta(minutes=30),
+        #     views_timeout =timedelta(minutes=30),
+        #     query_timeout =timedelta(minutes=30),
+        #     analytics_timeout =timedelta(minutes=30),
+        #     search_timeout =timedelta(minutes=30),
+        #     management_timeout =timedelta(minutes=30),
+        #     dns_srv_timeout =timedelta(minutes=30)
+        # )
+        # self.cluster = Cluster('couchbase://localhost', ClusterOptions(auth, timeout_options = cluster_timeout))
         self.cluster = Cluster('couchbase://localhost', ClusterOptions(auth))
 
         # Wait until the cluster is ready for use.
@@ -87,19 +115,24 @@ class CouchVeronaCard():
         self.coll_poi = self.scope.collection(self.coll_poi_name)
         self.coll_card = self.scope.collection(self.coll_card_name)
         self.coll_log = self.scope.collection(self.coll_log_name)
+        #self.coll_poi_list = self.scope.collection(self.coll_poi_list_name)
+        #self.coll_calendar = self.scope.collection(self.coll_calendar_name)
 
     def importCSV(self, filename):
         with open(filename, 'r') as csvfile:
             datareader = csv.reader(csvfile)
             for record in datareader:
-                date_parts = record[0].split("-")
-                date = date_parts[0] + '-' + date_parts[1] + '-20' + date_parts[2]
+                date_event_parts = record[0].split("-")
+                date_event = date_event_parts[0] + '-' + date_event_parts[1] + '-20' + date_event_parts[2]
 
                 date_act_parts = record[5].split("-")
                 date_act = date_act_parts[0] + '-' + date_act_parts[1] + '-20' + date_act_parts[2]
 
+                timestamp_event = datetime.strptime(date_event, "%d-%m-%Y").timestamp()
+
                 doc = {
-                    "date":         date,
+                    "date_event":   date_event,
+                    "timestamp_event": timestamp_event * 1000,
                     "time":         record[1],
                     "venue_name":   record[2],
                     "venue_id":     record[3],
@@ -111,12 +144,12 @@ class CouchVeronaCard():
                     "filename":     filename
                 }
                 try:
-                    key = doc['date'] + '-' + doc['time'] + '-' + doc['venue_id']
+                    key = doc['date_event'] + '-' + doc['time'] + '-' + doc['venue_id']
                     self.coll_import.upsert(key, doc)
                 except Exception as e:
                     print(e)
 
-    def AggregateByVenueDate(self):
+    def aggregateByVenueDate(self, filename):
         """
         1- POI che ha avuto il minimo numero di accessi in un giorno specifico.
         2- dato un anno, trovare per ogni mese il POI con il numero massimo di accessi.
@@ -124,22 +157,27 @@ class CouchVeronaCard():
         qry = """
             SELECT 
                 count(*) cnt, 
-                venue_name, 
-                date, 
-                ARRAY_AGG( {time, card_id, card_type} ) AS swipe,
-                SUBSTR(date,0,2) day,
-                SUBSTR(date,3,2) month,
-                SUBSTR(date,6,4) year 
-            FROM verona_card.verona_card_0.import i 
-            GROUP BY venue_name, date
+                i.venue_name, 
+                i.date_event, 
+                ARRAY_AGG( {i.time, i.card_id, i.card_type} ) AS swipe,
+                SUBSTR(i.date_event,0,2) day,
+                SUBSTR(i.date_event,3,2) month,
+                SUBSTR(i.date_event,6,4) year 
+            FROM 
+                verona_card.verona_card_0.import i RIGHT JOIN 
+                (SELECT DISTINCT venue_name FROM verona_card.verona_card_0.import ) AS p ON i.venue_name = p.venue_name
+            WHERE 
+                i.filename = $1 
+            GROUP BY i.venue_name, i.date_event
         """
 
         try:
-            row_iter = self.cluster.query(qry)
+            params = QueryOptions(positional_parameters=[filename], timeout=timedelta(minutes=10))
+            row_iter = self.cluster.query(qry, params)
             cntr = 0
             for row in row_iter:
                 try:
-                    key = row['venue_name'].replace(' ', '_') + '_' + row['date']
+                    key = row['venue_name'].replace(' ', '_') + '_' + row['date_event']
                     self.coll_poi.upsert(key, row)
                     cntr += 1
                 except Exception as e:
@@ -147,7 +185,7 @@ class CouchVeronaCard():
         except Exception as e:
             print(f"AggregateByVenueDate:read:\n {e}")
 
-    def AggregateByCard(self):
+    def aggregateByCard(self, filename):
         """
         le verona card che hanno fatto strisciate in più di 1 giorno, riportando tutte le strisciate che la carta ha eseguito.
         """
@@ -155,17 +193,19 @@ class CouchVeronaCard():
             SELECT 
                 count(*) cnt, 
                 card_id, 
-                ARRAY_AGG( {date, time, venue_name, venue_id } ) AS swipe 
+                ARRAY_AGG( {date_event, time, venue_name, venue_id } ) AS swipe 
             FROM verona_card.verona_card_0.import i 
+            WHERE filename = $1
             GROUP BY card_id
         """
         try:
-            row_iter = self.cluster.query( qry )
+            params = QueryOptions(positional_parameters=[filename])
+            row_iter = self.cluster.query( qry, params )
             cntr = 0
             for row in row_iter:
                 try:
                     key = row['card_id']
-                    days = [swipe['date'] for swipe in row['swipe']]
+                    days = [swipe['date_event'] for swipe in row['swipe']]
                     row['num_days'] = len(set(days))
                     self.coll_card.upsert(key, row)
                 except Exception as e:
@@ -181,12 +221,12 @@ class CouchVeronaCard():
             SELECT p.*
             FROM verona_card.verona_card_0.vc_poi p
             WHERE 
-            date = $1 AND 
+            date_event = $1 AND 
             cnt WITHIN (
                 SELECT cnt
                 FROM verona_card.verona_card_0.vc_poi p2
                 WHERE 
-                    date = $1
+                    date_event = $1
                 ORDER BY cnt
                 LIMIT 1
             )
@@ -248,7 +288,7 @@ class CouchVeronaCard():
         except Exception as e:
             print(e)
 
-    def LogGetData(self, filename):
+    def logGetData(self, filename):
         qry = """
             SELECT l.*
             FROM verona_card.verona_card_0.vc_log l
@@ -266,12 +306,12 @@ class CouchVeronaCard():
             results = None
         return results
 
-    def LogAddData(self, filename):
+    def logAddData(self, filename):
         result = True
         qry = """
             SELECT 
-                MIN(STR_TO_MILLIS( i.date ,'DD-MM-YYYY')) timestamp_min, 
-                MAX(STR_TO_MILLIS( i.date ,'DD-MM-YYYY')) timestamp_max
+                MIN(STR_TO_MILLIS( i.date_event ,'DD-MM-YYYY')) timestamp_min, 
+                MAX(STR_TO_MILLIS( i.date_event ,'DD-MM-YYYY')) timestamp_max
             FROM verona_card.verona_card_0.import i
             WHERE filename = $1
         """
@@ -303,63 +343,153 @@ class CouchVeronaCard():
             result = False
         return result
 
-    def InitCollections(self):
+
+    def DropCollections(self):
+        print("DropCollections ")
+        qry_delete = "DROP COLLECTION {}.{}.{} IF EXISTS"
+        try:
+            for coll_name in self.coll_list:
+                print("DropCollections: "+coll_name)
+                opt = QueryOptions(timeout=timedelta(minutes=10))
+                qry = self.cluster.query(qry_delete.format(self.bucket_name, self.scope_name, coll_name), opt)
+                qry.execute()
+        except Exception as e:
+            print("ERROR: DropCollections: ")
+            print(e)
+
+    def CreateCollections(self):
         qry_create = "CREATE COLLECTION {}.{}.{} IF NOT EXISTS"
-        qry_index = "CREATE PRIMARY INDEX IF NOT EXISTS ON {}.{}.{}"
 
         try:
             for coll_name in self.coll_list:
+                print("CreateCollections: " + coll_name)
                 # COLLECTION
                 qry = self.cluster.query( qry_create.format(self.bucket_name, self.scope_name, coll_name) )
                 qry.execute()
-
-                # INDEX
-                qry = self.cluster.query( qry_index.format(self.bucket_name, self.scope_name, coll_name) )
-                qry.execute()
-
         except Exception as e:
-            print("ERROR: InitCollections: ")
+            print("ERROR: CreateCollections: ")
             print(e)
 
+    def IndexCollections(self):
+        qry_index = "CREATE PRIMARY INDEX IF NOT EXISTS ON {}.{}.{}"
+
+        custom_idx = [
+            "create index idx_import_venue_name ON verona_card.verona_card_0.import(venue_name)",
+            "create index idx_import_filename ON verona_card.verona_card_0.import(filename)"
+        ]
 
 
-    def ResetCollections(self):
-        qry_delete = "DELETE FROM {}.{}.{}"
         try:
             for coll_name in self.coll_list:
-                qry = self.cluster.query(qry_delete.format(self.bucket_name, self.scope_name, coll_name) )
+                print("IndexCollections: " + coll_name)
+                # INDEX
+                qry = self.cluster.query(qry_index.format(self.bucket_name, self.scope_name, coll_name))
                 qry.execute()
-                print(qry)
+
+            for qry_idx in custom_idx:
+                print("IndexCollections: custom:" + qry_idx)
+                # INDEX
+                qry = self.cluster.query( qry_idx )
+                qry.execute()
+
         except Exception as e:
-            print("ERROR: ResetCollections: ")
+            print("ERROR: IndexCollections: ")
             print(e)
 
 
 
-def main():
+
+    def createPoiList(self):
+        qry = "select distinct i.venue_name from verona_card.verona_card_0.import i"
+        try:
+            row_iter = self.cluster.query(qry)
+            for row in row_iter:
+                try:
+                    key = row['venue_name']
+                    self.coll_poi_list.upsert(key, row)
+                except Exception as e:
+                    print(e)
+        except Exception as e:
+            print(e)
+
+    def createCalendar(self, year_from, year_to=None):
+        if year_to is None: year_to = date.today().year
+
+        start_day = f'1/1/{year_from}'
+        end_day = f'31/12/{year_to}'
+
+        start_date = pd.to_datetime(start_day, format="%d/%m/%Y")
+        end_date = pd.to_datetime(end_day, format="%d/%m/%Y")
+
+        date_index = pd.date_range(start_date, end_date, freq="1D")
+
+        day_list = list(date_index.strftime('%d-%m-%Y'))
+
+
+        for day in day_list:
+            try:
+                key = day
+                timestamp = datetime.strptime(day, "%d-%m-%Y").timestamp() * 1000
+                doc = {'day': day, 'timestamp': timestamp}
+                self.coll_calendar.upsert(key, doc)
+            except Exception as e:
+                print(e)
+
+
+def reset():
     cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
     cvc.connect()
-    cvc.InitCollections()
-    cvc.ResetCollections()
+
+    cvc.DropCollections()
+    cvc.CreateCollections()
+    cvc.IndexCollections()
+
+
+def load():
+    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
+    cvc.connect()
+
     basepath = "./dataset_veronacard_2014_2020/"
     csvfiles = glob.glob(basepath+'*.csv')
+    #csvfiles = ["./dataset_veronacard_2014_2020/dati_2014.csv"]
     for csvfile in csvfiles:
         print(f"Processing: {csvfile}")
-        logs = cvc.LogGetData(csvfile)
+        logs = cvc.logGetData(csvfile)
         if len(logs)>0:
             print(f"Skippings: {csvfile}")
             continue
         cvc.importCSV(csvfile)
-        cvc.LogAddData(csvfile)
+        cvc.logAddData(csvfile)
 
-        cvc.AggregateByVenueDate()
-        cvc.AggregateByCard()
+    #cvc.createPoiList()
+    #cvc.createCalendar(2014)
+
+
+def aggregate():
+    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
+    cvc.connect()
+
+    basepath = "./dataset_veronacard_2014_2020/"
+    csvfiles = glob.glob(basepath+'*.csv')
+    #csvfiles = ["./dataset_veronacard_2014_2020/dati_2014.csv"]
+    for csvfile in csvfiles:
+        cvc.aggregateByVenueDate(csvfile)
+        cvc.aggregateByCard(csvfile)
+
+def query():
+    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
+    cvc.connect()
 
     cvc.searchVenueLestVisitDay('17-08-2014')
     cvc.searchVenueMostMonthVisitYear('2014')
     cvc.searchCardsSwipeMultipleDays()
 
 
+def main():
+    #reset()
+    #load()
+    aggregate()
+    #query()
 
 if __name__ == '__main__':
     main()
