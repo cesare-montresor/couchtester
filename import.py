@@ -82,10 +82,8 @@ class CouchVeronaCard():
         # Get a reference to our cluster
         # NOTE: For TLS/SSL connection use 'couchbases://<your-ip-address>' instead
         #
-        #
         # Increase index timeout
         # curl -X POST -u couchtester:couchtester http://localhost:9102/settings --data '{"indexer.settings.scan_timeout": 300000}'
-        #
         #
         # Increase other timeouts
         # cluster_timeout = ClusterTimeoutOptions(
@@ -115,8 +113,6 @@ class CouchVeronaCard():
         self.coll_poi = self.scope.collection(self.coll_poi_name)
         self.coll_card = self.scope.collection(self.coll_card_name)
         self.coll_log = self.scope.collection(self.coll_log_name)
-        #self.coll_poi_list = self.scope.collection(self.coll_poi_list_name)
-        #self.coll_calendar = self.scope.collection(self.coll_calendar_name)
 
     def importCSV(self, filename):
         with open(filename, 'r') as csvfile:
@@ -375,7 +371,15 @@ class CouchVeronaCard():
 
         custom_idx = [
             "create index idx_import_venue_name ON verona_card.verona_card_0.import(venue_name)",
-            "create index idx_import_filename ON verona_card.verona_card_0.import(filename)"
+            "create index idx_import_filename ON verona_card.verona_card_0.import(filename)",
+            "create index idx_import_card_id ON verona_card.verona_card_0.import(card_id)",
+
+            "create index idx_vc_poi_month ON verona_card.verona_card_0.vc_poi(month)",
+            "create index idx_vc_poi_year ON verona_card.verona_card_0.vc_poi(year)",
+            "create index idx_vc_poi_cnt ON verona_card.verona_card_0.vc_poi(cnt)",
+
+            "create index idx_vc_card_num_days ON verona_card.verona_card_0.vc_card(num_days)",
+            "create index idx_vc_card_cnt ON verona_card.verona_card_0.vc_card(cnt)"
         ]
 
 
@@ -473,6 +477,7 @@ def aggregate():
     csvfiles = glob.glob(basepath+'*.csv')
     #csvfiles = ["./dataset_veronacard_2014_2020/dati_2014.csv"]
     for csvfile in csvfiles:
+        print("AggregateDataFrom:" + csvfile)
         cvc.aggregateByVenueDate(csvfile)
         cvc.aggregateByCard(csvfile)
 
@@ -488,8 +493,8 @@ def query():
 def main():
     #reset()
     #load()
-    aggregate()
-    #query()
+    #aggregate()
+    query()
 
 if __name__ == '__main__':
     main()
