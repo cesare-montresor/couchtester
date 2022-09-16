@@ -49,11 +49,16 @@ class CouchVeronaCard():
         self.coll_card_name = "vc_card"
         self.coll_log_name = "vc_log"
 
+        #self.coll_poi_list_name = "vc_poi_list"
+        #self.coll_calendar_name = "vc_calendar"
+
         self.coll_list = [
             self.coll_import_name,
             self.coll_poi_name,
             self.coll_card_name,
-            self.coll_log_name
+            self.coll_log_name,
+            #self.coll_poi_list_name,
+            #self.coll_calendar_name
         ]
 
         self.cluster = None
@@ -74,6 +79,7 @@ class CouchVeronaCard():
         # User Input ends here.
 
         # Connect options - authentication
+        auth = PasswordAuthenticator(self.username,self.password)
         auth = PasswordAuthenticator(self.username, self.password)
         # Get a reference to our cluster
         # NOTE: For TLS/SSL connection use 'couchbases://<your-ip-address>' instead
@@ -110,6 +116,8 @@ class CouchVeronaCard():
         self.coll_poi = self.scope.collection(self.coll_poi_name)
         self.coll_card = self.scope.collection(self.coll_card_name)
         self.coll_log = self.scope.collection(self.coll_log_name)
+        #self.coll_poi_list = self.scope.collection(self.coll_poi_list_name)
+        #self.coll_calendar = self.scope.collection(self.coll_calendar_name)
 
     def importCSV(self, filename):
         with open(filename, 'r') as csvfile:
