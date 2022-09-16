@@ -35,7 +35,8 @@ Si tratta delle strisciate delle VeronaCard dal 2014 al 2020 (un file CSV per og
 
 
 class CouchVeronaCard():
-    def __init__(self,username, password, bucket_name, scope_name, cert_path=None):
+    def __init__(self, url ,username, password, bucket_name, scope_name, cert_path=None):
+        self.url = url
         self.username = username
         self.password = password
         self.cert_path = cert_path
@@ -48,16 +49,11 @@ class CouchVeronaCard():
         self.coll_card_name = "vc_card"
         self.coll_log_name = "vc_log"
 
-        #self.coll_poi_list_name = "vc_poi_list"
-        #self.coll_calendar_name = "vc_calendar"
-
         self.coll_list = [
             self.coll_import_name,
             self.coll_poi_name,
             self.coll_card_name,
-            self.coll_log_name,
-            #self.coll_poi_list_name,
-            #self.coll_calendar_name
+            self.coll_log_name
         ]
 
         self.cluster = None
@@ -78,12 +74,13 @@ class CouchVeronaCard():
         # User Input ends here.
 
         # Connect options - authentication
-        auth = PasswordAuthenticator(self.username,self.password)
+        auth = PasswordAuthenticator(self.username, self.password)
         # Get a reference to our cluster
         # NOTE: For TLS/SSL connection use 'couchbases://<your-ip-address>' instead
         #
         # Increase index timeout
         # curl -X POST -u couchtester:couchtester http://localhost:9102/settings --data '{"indexer.settings.scan_timeout": 300000}'
+        # curl -X POST -u couchtester:couchtester http://172.31.1.1:9102/settings --data '{"indexer.settings.scan_timeout": 300000}'
         #
         # Increase other timeouts
         # cluster_timeout = ClusterTimeoutOptions(
@@ -100,7 +97,7 @@ class CouchVeronaCard():
         #     dns_srv_timeout =timedelta(minutes=30)
         # )
         # self.cluster = Cluster('couchbase://localhost', ClusterOptions(auth, timeout_options = cluster_timeout))
-        self.cluster = Cluster('couchbase://localhost', ClusterOptions(auth))
+        self.cluster = Cluster(self.url, ClusterOptions(auth))
 
         # Wait until the cluster is ready for use.
         self.cluster.wait_until_ready(timedelta(seconds=5))
@@ -143,7 +140,7 @@ class CouchVeronaCard():
                     key = doc['date_event'] + '-' + doc['time'] + '-' + doc['venue_id']
                     self.coll_import.upsert(key, doc)
                 except Exception as e:
-                    print(e)
+                    printError(e)
 
     def aggregateByVenueDate(self, filename):
         """
@@ -177,9 +174,9 @@ class CouchVeronaCard():
                     self.coll_poi.upsert(key, row)
                     cntr += 1
                 except Exception as e:
-                    print(f"AggregateByVenueDate:write:\n {e}")
+                    printError(f"AggregateByVenueDate:write:\n {e}")
         except Exception as e:
-            print(f"AggregateByVenueDate:read:\n {e}")
+            printError(f"AggregateByVenueDate:read:\n {e}")
 
     def aggregateByCard(self, filename):
         """
@@ -205,9 +202,9 @@ class CouchVeronaCard():
                     row['num_days'] = len(set(days))
                     self.coll_card.upsert(key, row)
                 except Exception as e:
-                    print(e)
+                    printError(e)
         except Exception as e:
-            print(e)
+            printError(e)
 
     def searchVenueLestVisitDay(self, day):
         """
@@ -233,7 +230,7 @@ class CouchVeronaCard():
             for row in row_iter:
                 print(row)
         except Exception as e:
-            print(e)
+            printError(e)
 
     def searchVenueMostMonthVisitYear(self, year):
         """
@@ -265,7 +262,7 @@ class CouchVeronaCard():
             for row in row_iter:
                 print(row)
         except Exception as e:
-            print(e)
+            printError(e)
 
     def searchCardsSwipeMultipleDays(self):
         """
@@ -282,7 +279,7 @@ class CouchVeronaCard():
             for row in row_iter:
                 print(row)
         except Exception as e:
-            print(e)
+            printError(e)
 
     def logGetData(self, filename):
         qry = """
@@ -298,7 +295,7 @@ class CouchVeronaCard():
                 print(row)
                 results.append(row)
         except Exception as e:
-            print(e)
+            printError(e)
             results = None
         return results
 
@@ -320,7 +317,7 @@ class CouchVeronaCard():
                 print(result)
                 break
         except Exception as e:
-            print(e)
+            printError(e)
             return False
 
         key = filename.replace(' ', '_')
@@ -335,7 +332,7 @@ class CouchVeronaCard():
             print(doc)
             self.coll_log.upsert(key, doc)
         except Exception as e:
-            print(e)
+            printError(e)
             result = False
         return result
 
@@ -351,7 +348,7 @@ class CouchVeronaCard():
                 qry.execute()
         except Exception as e:
             print("ERROR: DropCollections: ")
-            print(e)
+            printError(e)
 
     def CreateCollections(self):
         qry_create = "CREATE COLLECTION {}.{}.{} IF NOT EXISTS"
@@ -364,22 +361,22 @@ class CouchVeronaCard():
                 qry.execute()
         except Exception as e:
             print("ERROR: CreateCollections: ")
-            print(e)
+            printError(e)
 
     def IndexCollections(self):
         qry_index = "CREATE PRIMARY INDEX IF NOT EXISTS ON {}.{}.{}"
 
         custom_idx = [
-            "create index idx_import_venue_name ON verona_card.verona_card_0.import(venue_name)",
-            "create index idx_import_filename ON verona_card.verona_card_0.import(filename)",
-            "create index idx_import_card_id ON verona_card.verona_card_0.import(card_id)",
+            "create index idx_import_venue_name IF NOT EXISTS ON verona_card.verona_card_0.import(venue_name)",
+            "create index idx_import_filename IF NOT EXISTS ON verona_card.verona_card_0.import(filename)",
+            "create index idx_import_card_id IF NOT EXISTS ON verona_card.verona_card_0.import(card_id)",
 
-            "create index idx_vc_poi_month ON verona_card.verona_card_0.vc_poi(month)",
-            "create index idx_vc_poi_year ON verona_card.verona_card_0.vc_poi(year)",
-            "create index idx_vc_poi_cnt ON verona_card.verona_card_0.vc_poi(cnt)",
+            "create index idx_vc_poi_month IF NOT EXISTS ON verona_card.verona_card_0.vc_poi(month)",
+            "create index idx_vc_poi_year IF NOT EXISTS ON verona_card.verona_card_0.vc_poi(year)",
+            "create index idx_vc_poi_cnt IF NOT EXISTS ON verona_card.verona_card_0.vc_poi(cnt)",
 
-            "create index idx_vc_card_num_days ON verona_card.verona_card_0.vc_card(num_days)",
-            "create index idx_vc_card_cnt ON verona_card.verona_card_0.vc_card(cnt)"
+            "create index idx_vc_card_num_days IF NOT EXISTS  ON verona_card.verona_card_0.vc_card(num_days)",
+            "create index idx_vc_card_cnt IF NOT EXISTS  ON verona_card.verona_card_0.vc_card(cnt)"
         ]
 
 
@@ -398,7 +395,7 @@ class CouchVeronaCard():
 
         except Exception as e:
             print("ERROR: IndexCollections: ")
-            print(e)
+            printError(e)
 
 
 
@@ -412,9 +409,9 @@ class CouchVeronaCard():
                     key = row['venue_name']
                     self.coll_poi_list.upsert(key, row)
                 except Exception as e:
-                    print(e)
+                    printError(e)
         except Exception as e:
-            print(e)
+            printError(e)
 
     def createCalendar(self, year_from, year_to=None):
         if year_to is None: year_to = date.today().year
@@ -437,21 +434,22 @@ class CouchVeronaCard():
                 doc = {'day': day, 'timestamp': timestamp}
                 self.coll_calendar.upsert(key, doc)
             except Exception as e:
-                print(e)
+                printError(e)
 
 
-def reset():
-    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
-    cvc.connect()
-
-    cvc.DropCollections()
+def init():
+    cvc = connect()
     cvc.CreateCollections()
     cvc.IndexCollections()
 
 
+def clean():
+    cvc = connect()
+    cvc.DropCollections()
+
+
 def load():
-    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
-    cvc.connect()
+    cvc = connect()
 
     basepath = "./dataset_veronacard_2014_2020/"
     csvfiles = glob.glob(basepath+'*.csv')
@@ -470,8 +468,7 @@ def load():
 
 
 def aggregate():
-    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
-    cvc.connect()
+    cvc = connect()
 
     basepath = "./dataset_veronacard_2014_2020/"
     csvfiles = glob.glob(basepath+'*.csv')
@@ -482,16 +479,30 @@ def aggregate():
         cvc.aggregateByCard(csvfile)
 
 def query():
-    cvc = CouchVeronaCard("couchtester", "couchtester", "verona_card", 'verona_card_0')
-    cvc.connect()
+    cvc = connect()
 
     cvc.searchVenueLestVisitDay('17-08-2014')
     cvc.searchVenueMostMonthVisitYear('2014')
     cvc.searchCardsSwipeMultipleDays()
 
+def connect():
+    cvc = CouchVeronaCard("couchbase://172.31.1.1", "couchtester", "couchtester", "verona_card", 'verona_card_0')
+    cvc.connect()
+    return cvc
+
+def printError(e):
+    print(e)
+    return
+    if isinstance(e,str):
+        print(e)
+        return
+
+    context = QueryErrorContext
+
 
 def main():
-    #reset()
+    #clean()
+    #init()
     #load()
     #aggregate()
     query()
