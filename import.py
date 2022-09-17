@@ -459,9 +459,9 @@ def clean():
 def load():
     cvc = connect()
 
-    basepath = "./dataset_veronacard_2014_2020/"
+    basepath = "./dataset"
     csvfiles = glob.glob(basepath+'*.csv')
-    #csvfiles = ["./dataset_veronacard_2014_2020/dati_2014.csv"]
+    #csvfiles = ["./dataset/dati_2014.csv"]
     for csvfile in csvfiles:
         print(f"Processing: {csvfile}")
         logs = cvc.logGetData(csvfile)
@@ -478,9 +478,9 @@ def load():
 def aggregate():
     cvc = connect()
 
-    basepath = "./dataset_veronacard_2014_2020/"
+    basepath = "./dataset/"
     csvfiles = glob.glob(basepath+'*.csv')
-    #csvfiles = ["./dataset_veronacard_2014_2020/dati_2014.csv"]
+    #csvfiles = ["./dataset/dati_2014.csv"]
     for csvfile in csvfiles:
         print("AggregateDataFrom:" + csvfile)
         cvc.aggregateByVenueDate(csvfile)
