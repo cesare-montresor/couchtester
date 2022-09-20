@@ -13,6 +13,7 @@ def aggregate():
     params = Config.sharedConfig().getConfig('databases', "couchtester_cluster0")
 
     cvcload.connect(**params)
+
     cvc.connect(**params)
 
     loglist = cvcload.logGetData()
